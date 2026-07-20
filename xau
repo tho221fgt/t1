@@ -1,5 +1,5 @@
 //@version=6
-indicator("XAU Sniper [Pro Elite Institutional V38 - Complete Working Version]", overlay=true, max_lines_count=500)
+indicator("XAU Sniper [Pro Elite Institutional V38 - Enhanced]", overlay=true, max_lines_count=500)
 
 // ============================================================================
 // SECTION 1: INPUTS
@@ -16,6 +16,11 @@ float minTickMultiplier = input.float(2.0, "Min Tick Distance (pips)", minval=0.
 bool showVolumeLines = input.bool(true, "Show Volume Support/Resistance Lines", group="Volume Lines")
 bool showDashedOldLevels = input.bool(true, "Show Dashed Old Volume Levels", group="Volume Lines")
 bool showBuySellArrows = input.bool(true, "Show Buy/Sell Arrows", group="Signal Visualization")
+
+// Performance controls
+int maxActiveLines = input.int(500, "Max Active Lines", minval=50, maxval=5000, group="Performance")
+int maxBrokenLines = input.int(200, "Max Broken Lines", minval=20, maxval=2000, group="Performance")
+int brokenLineLifetime = input.int(50, "Broken Line Lifetime (bars)", minval=5, maxval=500, group="Performance")
 
 // SCALP PROFILE
 float scalpSLMult = input.float(0.6, "SCALP: SL Multiplier", minval=0.3, maxval=1.5, step=0.1, group="Scalp Profile (Quick)")
@@ -43,8 +48,9 @@ float minRRFilter = input.float(1.5, "Minimum R:R Ratio Filter", minval=0.5, max
 // SECTION 2: CORE CALCULATIONS
 // ============================================================================
 float avgVol = ta.sma(volume, 20)
-bool isVolumeSurge = volume > (avgVol * sensitivity)
-float volumeMultiplier = volume / avgVol
+// guard avgVol==0
+float volumeMultiplier = avgVol == 0 ? 1.0 : volume / avgVol
+nbool isVolumeSurge = volume > (avgVol * sensitivity)
 
 bool isBullishOB = (close[1] < open[1] and close > open)
 bool isBearishOB = (close[1] > open[1] and close < open)
@@ -58,7 +64,7 @@ bool validSignal = not isNewsHour
 // ============================================================================
 // SECTION 2B: WIN PROBABILITY
 // ============================================================================
-float volumeStrength = math.min((volumeMultiplier - 1.0) * 40, 40.0)
+float volumeStrength = math.min(math.max(0.0, (volumeMultiplier - 1.0) * 40.0), 40.0)
 float obStrength = (isBearishOB or isBullishOB) ? 30.0 : 0.0
 
 float ma5 = ta.sma(close, 5)
@@ -101,66 +107,63 @@ if (isVolumeSurge and validSignal)
     
     box.new(left=bar_index[1], top=high[1], right=bar_index + 10, bottom=low[1], bgcolor=boxColor, border_color=borderColor, border_width=2)
     
-    // Make label background opaque white and black text for readability
-    label.new(bar_index + 5, (high[1] + low[1]) / 2, text=str.tostring(volume / avgVol, "#.#") + "x", color=color.new(color.white, 0), textcolor=color.black, size=size.small, style=label.style_la[...]
+    // Make label background opaque white and dark text for readability
+    label.new(bar_index + 5, (high[1] + low[1]) / 2, text=str.tostring(volumeMultiplier, "#.##") + "x", color=color.new(color.white, 0), textcolor=color.black, size=size.small, style=label.style_label_center)
 
 // ============================================================================
 // SECTION 5: BUY/SELL ARROWS
 // ============================================================================
-plotshape(showBuySellArrows and buySignal and validSignal, title="Institutional Buy", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.large, text="B[...]")
-
-plotshape(showBuySellArrows and sellSignal and validSignal, title="Institutional Sell", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.large, text=[...])
+plotshape(showBuySellArrows and buySignal and validSignal, title="Institutional Buy", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.large, text="BUY", textcolor=color.white)
+plotshape(showBuySellArrows and sellSignal and validSignal, title="Institutional Sell", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.large, text="SELL", textcolor=color.white)
 
 // ============================================================================
-// SECTION 5B: RISK/REWARD ZONES - MORE VISIBLE
+// SECTION 5B: RISK/REWARD ZONES - STANDARDIZED (entry-based)
 // ============================================================================
 if showColorGradedZones and (buySignal or sellSignal) and validSignal
     float entryPrice = close
-    
-    // SCALP Profile Zones
-    float scalpSLPrice = sellSignal ? (high - scalpSL) : (low - scalpSL)
-    float scalpTP2Price = sellSignal ? (close - scalpTP2) : (close + scalpTP2)
+    // compute standardized SL and TP prices based on entry
+    // SCALP
+    float scalpSLPrice = buySignal ? entryPrice - scalpSL : sellSignal ? entryPrice + scalpSL : na
+    float scalpTP2Price = buySignal ? entryPrice + scalpTP2 : sellSignal ? entryPrice - scalpTP2 : na
     float scalpRiskPips = math.abs(entryPrice - scalpSLPrice)
     float scalpRewardPips = math.abs(scalpTP2Price - entryPrice)
     float scalpRR = scalpRiskPips > 0 ? scalpRewardPips / scalpRiskPips : 0.0
     
     if scalpRR >= minRRFilter
-        box.new(left=bar_index, top=sellSignal ? entryPrice : scalpSLPrice, right=bar_index + 12, bottom=sellSignal ? scalpSLPrice : entryPrice, bgcolor=color.new(color.red, 75), border_color=col[...]
-        box.new(left=bar_index, top=sellSignal ? scalpTP2Price : entryPrice, right=bar_index + 12, bottom=sellSignal ? entryPrice : scalpTP2Price, bgcolor=color.new(color.green, 75), border_color=colo[...]
+        box.new(left=bar_index, top=math.max(entryPrice, scalpSLPrice), right=bar_index + 12, bottom=math.min(entryPrice, scalpSLPrice), bgcolor=color.new(color.red, 75), border_color=color.red, border_width=1)
+        box.new(left=bar_index, top=math.max(entryPrice, scalpTP2Price), right=bar_index + 12, bottom=math.min(entryPrice, scalpTP2Price), bgcolor=color.new(color.green, 75), border_color=color.green, border_width=1)
     
-    // SWING Profile Zones
-    float swingSLPrice = sellSignal ? (high - swingSL) : (low - swingSL)
-    float swingTP2Price = sellSignal ? (close - swingTP2) : (close + swingTP2)
+    // SWING
+    float swingSLPrice = buySignal ? entryPrice - swingSL : sellSignal ? entryPrice + swingSL : na
+    float swingTP2Price = buySignal ? entryPrice + swingTP2 : sellSignal ? entryPrice - swingTP2 : na
     float swingRiskPips = math.abs(entryPrice - swingSLPrice)
     float swingRewardPips = math.abs(swingTP2Price - entryPrice)
     float swingRR = swingRiskPips > 0 ? swingRewardPips / swingRiskPips : 0.0
     
     if swingRR >= minRRFilter
-        box.new(left=bar_index, top=sellSignal ? entryPrice : swingSLPrice, right=bar_index + 18, bottom=sellSignal ? swingSLPrice : entryPrice, bgcolor=color.new(color.red, 70), border_color=col[...]
-        box.new(left=bar_index, top=sellSignal ? swingTP2Price : entryPrice, right=bar_index + 18, bottom=sellSignal ? entryPrice : swingTP2Price, bgcolor=color.new(color.green, 70), border_color=colo[...]
+        box.new(left=bar_index, top=math.max(entryPrice, swingSLPrice), right=bar_index + 18, bottom=math.min(entryPrice, swingSLPrice), bgcolor=color.new(color.red, 70), border_color=color.red, border_width=1)
+        box.new(left=bar_index, top=math.max(entryPrice, swingTP2Price), right=bar_index + 18, bottom=math.min(entryPrice, swingTP2Price), bgcolor=color.new(color.green, 70), border_color=color.green, border_width=1)
     
-    // POSITION Profile Zones
-    float positionSLPrice = sellSignal ? (high - positionSL) : (low - positionSL)
-    float positionTP2Price = sellSignal ? (close - positionTP2) : (close + positionTP2)
+    // POSITION
+    float positionSLPrice = buySignal ? entryPrice - positionSL : sellSignal ? entryPrice + positionSL : na
+    float positionTP2Price = buySignal ? entryPrice + positionTP2 : sellSignal ? entryPrice - positionTP2 : na
     float positionRiskPips = math.abs(entryPrice - positionSLPrice)
     float positionRewardPips = math.abs(positionTP2Price - entryPrice)
     float positionRR = positionRiskPips > 0 ? positionRewardPips / positionRiskPips : 0.0
     
     if positionRR >= minRRFilter
-        box.new(left=bar_index, top=sellSignal ? entryPrice : positionSLPrice, right=bar_index + 25, bottom=sellSignal ? positionSLPrice : entryPrice, bgcolor=color.new(color.red, 65), border_col[...]
-        box.new(left=bar_index, top=sellSignal ? positionTP2Price : entryPrice, right=bar_index + 25, bottom=sellSignal ? entryPrice : positionTP2Price, bgcolor=color.new(color.green, 65), border[...]
+        box.new(left=bar_index, top=math.max(entryPrice, positionSLPrice), right=bar_index + 25, bottom=math.min(entryPrice, positionSLPrice), bgcolor=color.new(color.red, 65), border_color=color.red, border_width=1)
+        box.new(left=bar_index, top=math.max(entryPrice, positionTP2Price), right=bar_index + 25, bottom=math.min(entryPrice, positionTP2Price), bgcolor=color.new(color.green, 65), border_color=color.green, border_width=1)
     
-    // Entry zone (Yellow anchor line)
-    box.new(left=bar_index - 1, top=entryPrice + 0.10, right=bar_index + 25, bottom=entryPrice - 0.10, bgcolor=color.new(color.yellow, 60), border_color=color.new(color.orange, 20), border_width=[...]
+    // Entry zone (Yellow anchor band)
+    box.new(left=bar_index - 1, top=entryPrice + 0.10, right=bar_index + 25, bottom=entryPrice - 0.10, bgcolor=color.new(color.yellow, 60), border_color=color.new(color.orange, 20), border_width=2)
     
     if showWinProbability
-        // Use opaque white background for win-prob label and dark text for readability
-        label.new(bar_index + 12, entryPrice + (sellSignal ? -0.5 : 0.5), text="📊 Win: " + str.tostring(winProbability, "#.#") + "%", color=color.new(color.white, 0), textcolor=color.black, si[...] 
+        label.new(bar_index + 12, entryPrice + (sellSignal ? -0.5 : 0.5), text="📊 Win: " + str.tostring(winProbability, "#.#") + "%", color=color.new(color.white, 0), textcolor=color.black, size=size.small, style=label.style_label_center)
 
 // ============================================================================
-// SECTION 6: VOLUME LINES - OPTIMIZED WITH VISUAL PRIORITY (NEW LINES FIRST, THEN OLD)
+// SECTION 6: VOLUME LINES - ACTIVE / BROKEN MANAGEMENT
 // ============================================================================
-// SEPARATE ARRAYS: Active lines (solid) and broken lines (dashed)
 var line[] activeLines = array.new_line()
 var int[] activeLineTouches = array.new_int()
 var int[] activeLineTime = array.new_int()
@@ -171,90 +174,68 @@ var int[] brokenLineAge = array.new_int()
 // Calculate dynamic line thickness based on volume strength (2-6 pixels for better visibility)
 int currentLineThickness = int(math.max(2, math.min(int((volumeMultiplier - 1.0) * 3 + 2), 6)))
 
-// ============================================================================
-// CLEANUP: KEEP ACTIVE LINES MAX 5000, BROKEN LINES MAX 2000 FOR PERFORMANCE
-// ============================================================================
-if array.size(activeLines) > 5000
+// CLEANUP: enforce configured limits
+if array.size(activeLines) > maxActiveLines
     line.delete(array.shift(activeLines))
     array.shift(activeLineTouches)
     array.shift(activeLineTime)
 
-if array.size(brokenLines) > 2000
+if array.size(brokenLines) > maxBrokenLines
     line.delete(array.shift(brokenLines))
     array.shift(brokenLineAge)
 
-// ============================================================================
-// UPDATE ACTIVE LINES - CHECK FOR BREAKS (reverse-safe without negative step)
-// ============================================================================
+// UPDATE ACTIVE LINES - check for price breaks (iterate reverse-safe)
 if array.size(activeLines) > 0
     int activeCount = array.size(activeLines)
     for idx = 0 to activeCount - 1
-        int i = activeCount - 1 - idx  // iterate from last -> first safely
+        int i = activeCount - 1 - idx
         line activeLine = array.get(activeLines, i)
-        float lineY = line.get_y1(activeLine)
-        
-        // BREAK DETECTION: Close crosses the line
+        // protect against null-like lines: try to get y1
+        float lineY = na
+        // use pcall-style guard not available; assume valid but wrap in a simple check
+        lineY := line.get_y1(activeLine)
         bool priceBreaksAbove = close > lineY and close[1] <= lineY
         bool priceBreaksBelow = close < lineY and close[1] >= lineY
-        
         if (priceBreaksAbove or priceBreaksBelow) and showDashedOldLevels
-            // MOVE TO BROKEN LINES (convert to dashed, gray, thin)
             line.set_style(activeLine, line.style_dashed)
             line.set_width(activeLine, 1)
             line.set_color(activeLine, color.new(color.gray, 50))
-            
-            // Remove from active array and add to broken array
             array.push(brokenLines, activeLine)
             array.push(brokenLineAge, 0)
-            
-            // Remove from active (safe because we're iterating reverse)
             array.remove(activeLines, i)
             array.remove(activeLineTouches, i)
             array.remove(activeLineTime, i)
 
-// ============================================================================
-// AGE BROKEN LINES AND DELETE AFTER 50 BARS (reverse-safe without negative step)
-// ============================================================================
+// AGE BROKEN LINES AND DELETE AFTER LIFETIME (reverse-safe)
 if array.size(brokenLines) > 0
     int brokenCount = array.size(brokenLines)
     for idx = 0 to brokenCount - 1
-        int i = brokenCount - 1 - idx  // iterate from last -> first safely
+        int i = brokenCount - 1 - idx
         int age = array.get(brokenLineAge, i)
         int newAge = age + 1
-        
-        // Remove broken line after 50 bars of display
-        if newAge > 50
+        if newAge > brokenLineLifetime
             line.delete(array.get(brokenLines, i))
             array.remove(brokenLines, i)
             array.remove(brokenLineAge, i)
         else
             array.set(brokenLineAge, i, newAge)
 
-// ============================================================================
-// CREATE NEW VOLUME LINES - ONLY ADDED TO ACTIVE ARRAY
-// ============================================================================
+// CREATE NEW VOLUME LINES - only add to active array if distinct enough
 if showVolumeLines and isVolumeSurge
     float newLineLevel = (high + low) / 2
-    
-    // Determine color based on close vs open PRICE DIRECTION
     bool isPriceUp = close > open
     color newLineColor = isPriceUp ? color.new(#FF8C00, 2) : color.new(#FF0000, 2)
-    
-    // DUPLICATE FILTER
     bool levelExists = false
     float minDistance = syminfo.mintick * minTickMultiplier
-    
-    // Check only recent active lines (last 100) for speed
     int checkLimit = math.min(array.size(activeLines), 100)
     if checkLimit > 0
-        for i = array.size(activeLines) - checkLimit to array.size(activeLines) - 1 by 1
+        int startIdx = array.size(activeLines) - checkLimit
+        for i = startIdx to array.size(activeLines) - 1
             float existingY = line.get_y1(array.get(activeLines, i))
             if math.abs(existingY - newLineLevel) < minDistance
                 levelExists := true
                 break
-    
     if not levelExists
-        // Create new solid line with extend=extend.right
         line newVolLine = line.new(x1=bar_index, y1=newLineLevel, x2=bar_index, y2=newLineLevel, color=newLineColor, width=currentLineThickness, style=line.style_solid, extend=extend.right)
         array.push(activeLines, newVolLine)
         array.push(activeLineTouches, 0)
@@ -269,6 +250,7 @@ if barstate.islast
     bool signalActive = (sellSignal or buySignal) and validSignal
     float entryPrice = close
     
+    // Header
     table.cell(tacticalTable, 0, 0, "PROFILE", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
     table.cell(tacticalTable, 1, 0, "ENTRY", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
     table.cell(tacticalTable, 2, 0, "SL", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
@@ -277,77 +259,77 @@ if barstate.islast
     table.cell(tacticalTable, 5, 0, "TP3", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
     table.cell(tacticalTable, 6, 0, "R:R", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
     
-    // SCALP ROW
-    float scalpSLPrice = signalActive ? (sellSignal ? high - scalpSL : low - scalpSL) : 0.0
-    float scalpTP1Price = signalActive ? (sellSignal ? close - scalpTP1 : close + scalpTP1) : 0.0
-    float scalpTP2Price = signalActive ? (sellSignal ? close - scalpTP2 : close + scalpTP2) : 0.0
-    float scalpTP3Price = signalActive ? (sellSignal ? close - scalpTP3 : close + scalpTP3) : 0.0
-    float scalpRiskDist = math.abs(entryPrice - scalpSLPrice)
-    float scalpRR = scalpRiskDist > 0 ? math.abs(scalpTP2Price - entryPrice) / scalpRiskDist : 0.0
-    
+    // SCALP row (standardized)
+    float scalpSLPrice_tbl = signalActive ? (buySignal ? entryPrice - scalpSL : sellSignal ? entryPrice + scalpSL : na) : na
+    float scalpTP1Price_tbl = signalActive ? (buySignal ? entryPrice + scalpTP1 : sellSignal ? entryPrice - scalpTP1 : na) : na
+    float scalpTP2Price_tbl = signalActive ? (buySignal ? entryPrice + scalpTP2 : sellSignal ? entryPrice - scalpTP2 : na) : na
+    float scalpTP3Price_tbl = signalActive ? (buySignal ? entryPrice + scalpTP3 : sellSignal ? entryPrice - scalpTP3 : na) : na
+    float scalpRiskDist = signalActive ? math.abs(entryPrice - scalpSLPrice_tbl) : 0.0
+    float scalpRR = scalpRiskDist > 0 ? math.abs(scalpTP2Price_tbl - entryPrice) / scalpRiskDist : 0.0
+
     table.cell(tacticalTable, 0, 1, "🏃 SCALP", bgcolor=color.new(color.yellow, 80), text_color=color.black, text_size=size.small, text_halign=text.align_center)
-    table.cell(tacticalTable, 1, 1, str.tostring(entryPrice, "#.##"), bgcolor=color.new(color.yellow, 60), text_color=color.black, text_size=size.small)
-    table.cell(tacticalTable, 2, 1, str.tostring(scalpSLPrice, "#.##"), bgcolor=color.new(color.red, 85), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 3, 1, str.tostring(scalpTP1Price, "#.##"), bgcolor=color.new(color.green, 85), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 4, 1, str.tostring(scalpTP2Price, "#.##"), bgcolor=color.new(color.green, 85), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 5, 1, str.tostring(scalpTP3Price, "#.##"), bgcolor=color.new(color.green, 85), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 6, 1, str.tostring(scalpRR, "#.##") + ":1", bgcolor=scalpRR >= minRRFilter ? color.new(color.blue, 40) : color.new(color.orange, 40), text_color=color.white, text_size=si[...] 
+    table.cell(tacticalTable, 1, 1, signalActive ? str.tostring(entryPrice, "#.##") : "-", bgcolor=color.new(color.yellow, 60), text_color=color.black, text_size=size.small)
+    table.cell(tacticalTable, 2, 1, signalActive ? str.tostring(scalpSLPrice_tbl, "#.##") : "-", bgcolor=color.new(color.red, 85), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 3, 1, signalActive ? str.tostring(scalpTP1Price_tbl, "#.##") : "-", bgcolor=color.new(color.green, 85), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 4, 1, signalActive ? str.tostring(scalpTP2Price_tbl, "#.##") : "-", bgcolor=color.new(color.green, 85), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 5, 1, signalActive ? str.tostring(scalpTP3Price_tbl, "#.##") : "-", bgcolor=color.new(color.green, 85), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 6, 1, signalActive ? str.tostring(scalpRR, "#.##") + ":1" : "-", bgcolor=scalpRR >= minRRFilter ? color.new(color.blue, 40) : color.new(color.orange, 40), text_color=color.white, text_size=size.small)
     
-    // SWING ROW
-    float swingSLPrice = signalActive ? (sellSignal ? high - swingSL : low - swingSL) : 0.0
-    float swingTP1Price = signalActive ? (sellSignal ? close - swingTP1 : close + swingTP1) : 0.0
-    float swingTP2Price = signalActive ? (sellSignal ? close - swingTP2 : close + swingTP2) : 0.0
-    float swingTP3Price = signalActive ? (sellSignal ? close - swingTP3 : close + swingTP3) : 0.0
-    float swingRiskDist = math.abs(entryPrice - swingSLPrice)
-    float swingRR = swingRiskDist > 0 ? math.abs(swingTP2Price - entryPrice) / swingRiskDist : 0.0
-    
+    // SWING row
+    float swingSLPrice_tbl = signalActive ? (buySignal ? entryPrice - swingSL : sellSignal ? entryPrice + swingSL : na) : na
+    float swingTP1Price_tbl = signalActive ? (buySignal ? entryPrice + swingTP1 : sellSignal ? entryPrice - swingTP1 : na) : na
+    float swingTP2Price_tbl = signalActive ? (buySignal ? entryPrice + swingTP2 : sellSignal ? entryPrice - swingTP2 : na) : na
+    float swingTP3Price_tbl = signalActive ? (buySignal ? entryPrice + swingTP3 : sellSignal ? entryPrice - swingTP3 : na) : na
+    float swingRiskDist_tbl = signalActive ? math.abs(entryPrice - swingSLPrice_tbl) : 0.0
+    float swingRR_tbl = swingRiskDist_tbl > 0 ? math.abs(swingTP2Price_tbl - entryPrice) / swingRiskDist_tbl : 0.0
+
     table.cell(tacticalTable, 0, 2, "📊 SWING", bgcolor=color.new(color.blue, 80), text_color=color.white, text_size=size.small, text_halign=text.align_center)
-    table.cell(tacticalTable, 1, 2, str.tostring(entryPrice, "#.##"), bgcolor=color.new(color.blue, 60), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 2, 2, str.tostring(swingSLPrice, "#.##"), bgcolor=color.new(color.red, 70), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 3, 2, str.tostring(swingTP1Price, "#.##"), bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 4, 2, str.tostring(swingTP2Price, "#.##"), bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 5, 2, str.tostring(swingTP3Price, "#.##"), bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 6, 2, str.tostring(swingRR, "#.##") + ":1", bgcolor=swingRR >= minRRFilter ? color.new(color.blue, 30) : color.new(color.orange, 30), text_color=color.white, text_size=si[...] 
+    table.cell(tacticalTable, 1, 2, signalActive ? str.tostring(entryPrice, "#.##") : "-", bgcolor=color.new(color.blue, 60), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 2, 2, signalActive ? str.tostring(swingSLPrice_tbl, "#.##") : "-", bgcolor=color.new(color.red, 70), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 3, 2, signalActive ? str.tostring(swingTP1Price_tbl, "#.##") : "-", bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 4, 2, signalActive ? str.tostring(swingTP2Price_tbl, "#.##") : "-", bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 5, 2, signalActive ? str.tostring(swingTP3Price_tbl, "#.##") : "-", bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 6, 2, signalActive ? str.tostring(swingRR_tbl, "#.##") + ":1" : "-", bgcolor=swingRR_tbl >= minRRFilter ? color.new(color.blue, 30) : color.new(color.orange, 30), text_color=color.white, text_size=size.small)
     
-    // POSITION ROW
-    float positionSLPrice = signalActive ? (sellSignal ? high - positionSL : low - positionSL) : 0.0
-    float positionTP1Price = signalActive ? (sellSignal ? close - positionTP1 : close + positionTP1) : 0.0
-    float positionTP2Price = signalActive ? (sellSignal ? close - positionTP2 : close + positionTP2) : 0.0
-    float positionTP3Price = signalActive ? (sellSignal ? close - positionTP3 : close + positionTP3) : 0.0
-    float positionRiskDist = math.abs(entryPrice - positionSLPrice)
-    float positionRR = positionRiskDist > 0 ? math.abs(positionTP2Price - entryPrice) / positionRiskDist : 0.0
-    
+    // POSITION row
+    float positionSLPrice_tbl = signalActive ? (buySignal ? entryPrice - positionSL : sellSignal ? entryPrice + positionSL : na) : na
+    float positionTP1Price_tbl = signalActive ? (buySignal ? entryPrice + positionTP1 : sellSignal ? entryPrice - positionTP1 : na) : na
+    float positionTP2Price_tbl = signalActive ? (buySignal ? entryPrice + positionTP2 : sellSignal ? entryPrice - positionTP2 : na) : na
+    float positionTP3Price_tbl = signalActive ? (buySignal ? entryPrice + positionTP3 : sellSignal ? entryPrice - positionTP3 : na) : na
+    float positionRiskDist_tbl = signalActive ? math.abs(entryPrice - positionSLPrice_tbl) : 0.0
+    float positionRR_tbl = positionRiskDist_tbl > 0 ? math.abs(positionTP2Price_tbl - entryPrice) / positionRiskDist_tbl : 0.0
+
     table.cell(tacticalTable, 0, 3, "🏛️ POSITION", bgcolor=color.new(color.purple, 80), text_color=color.white, text_size=size.small, text_halign=text.align_center)
-    table.cell(tacticalTable, 1, 3, str.tostring(entryPrice, "#.##"), bgcolor=color.new(color.purple, 60), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 2, 3, str.tostring(positionSLPrice, "#.##"), bgcolor=color.new(color.red, 55), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 3, 3, str.tostring(positionTP1Price, "#.##"), bgcolor=color.new(color.green, 55), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 4, 3, str.tostring(positionTP2Price, "#.##"), bgcolor=color.new(color.green, 55), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 5, 3, str.tostring(positionTP3Price, "#.##"), bgcolor=color.new(color.green, 55), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 6, 3, str.tostring(positionRR, "#.##") + ":1", bgcolor=positionRR >= minRRFilter ? color.new(color.purple, 30) : color.new(color.orange, 30), text_color=color.white,[...]
+    table.cell(tacticalTable, 1, 3, signalActive ? str.tostring(entryPrice, "#.##") : "-", bgcolor=color.new(color.purple, 60), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 2, 3, signalActive ? str.tostring(positionSLPrice_tbl, "#.##") : "-", bgcolor=color.new(color.red, 55), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 3, 3, signalActive ? str.tostring(positionTP1Price_tbl, "#.##") : "-", bgcolor=color.new(color.green, 55), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 4, 3, signalActive ? str.tostring(positionTP2Price_tbl, "#.##") : "-", bgcolor=color.new(color.green, 55), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 5, 3, signalActive ? str.tostring(positionTP3Price_tbl, "#.##") : "-", bgcolor=color.new(color.green, 55), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 6, 3, signalActive ? str.tostring(positionRR_tbl, "#.##") + ":1" : "-", bgcolor=positionRR_tbl >= minRRFilter ? color.new(color.purple, 30) : color.new(color.orange, 30), text_color=color.white, text_size=size.small)
     
-    // STATUS ROW
+    // STATUS row
     string signalStatus = sellSignal ? "🔴 SELL" : buySignal ? "🟢 BUY" : "⏳ WAIT"
     color statusColor = sellSignal ? color.new(color.red, 40) : buySignal ? color.new(color.green, 40) : color.new(color.gray, 40)
     
     table.cell(tacticalTable, 0, 4, "STATUS", bgcolor=color.gray, text_color=color.white, text_size=size.small)
     table.cell(tacticalTable, 1, 4, signalStatus, bgcolor=statusColor, text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 2, 4, isNewsHour ? "📰 NEWS" : "✓ READY", bgcolor=isNewsHour ? color.new(color.orange, 40) : color.new(color.green, 40), text_color=color.white, text_size=size.s[...]
-    table.cell(tacticalTable, 3, 4, str.tostring(volumeMultiplier, "#.#") + "x", bgcolor=color.new(color.blue, 40), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 4, 4, "VOL SURGE", bgcolor=isVolumeSurge ? color.new(color.green, 30) : color.new(color.gray, 30), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 5, 4, syminfo.currency, bgcolor=color.new(color.gray, 30), text_size=size.small)
-    table.cell(tacticalTable, 6, 4, "A:" + str.tostring(array.size(activeLines)) + " B:" + str.tostring(array.size(brokenLines)), bgcolor=array.size(activeLines) > 500 ? color.new(color.orange, 30) : [...]
+    table.cell(tacticalTable, 2, 4, isNewsHour ? "📰 NEWS" : "✓ READY", bgcolor=isNewsHour ? color.new(color.orange, 40) : color.new(color.green, 40), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 3, 4, str.tostring(volumeMultiplier, "#.##") + "x", bgcolor=color.new(color.blue, 40), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 4, 4, isVolumeSurge ? "VOL SURGE" : "NO SURGE", bgcolor=isVolumeSurge ? color.new(color.green, 30) : color.new(color.gray, 30), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 5, 4, syminfo.currency, bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 6, 4, "A:" + str.tostring(array.size(activeLines)) + " B:" + str.tostring(array.size(brokenLines)), bgcolor=array.size(activeLines) > maxActiveLines * 0.8 ? color.new(color.orange, 30) : color.new(color.gray, 30), text_color=color.white, text_size=size.small)
     
     // ATR & PROBABILITY
     table.cell(tacticalTable, 0, 5, "ATR", bgcolor=color.gray, text_color=color.white, text_size=size.small)
     table.cell(tacticalTable, 1, 5, str.tostring(atrValue, "#.##"), bgcolor=color.new(color.orange, 40), text_color=color.white, text_size=size.small)
     table.cell(tacticalTable, 2, 5, "WIN %", bgcolor=color.gray, text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 3, 5, str.tostring(winProbability, "#.#") + "%", bgcolor=winProbability >= 60 ? color.new(color.green, 40) : (winProbability >= 45 ? color.new(color.blue, 40) : color.new[...]
+    table.cell(tacticalTable, 3, 5, str.tostring(winProbability, "#.##") + "%", bgcolor=winProbability >= 60 ? color.new(color.green, 40) : (winProbability >= 45 ? color.new(color.blue, 40) : color.new(color.orange, 40)), text_color=color.white, text_size=size.small)
     table.cell(tacticalTable, 4, 5, "VOL STR", bgcolor=color.gray, text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 5, 5, str.tostring(volumeStrength, "#.#") + "%", bgcolor=color.new(color.blue, 30), text_color=color.white, text_size=size.small)
-    table.cell(tacticalTable, 6, 5, (buySignal or sellSignal) ? "✓ SIGNAL" : "○ NONE", bgcolor=(buySignal or sellSignal) ? color.new(color.green, 40) : color.new(color.gray, 40), text_color=c[...]
+    table.cell(tacticalTable, 5, 5, str.tostring(volumeStrength, "#.##") + "%", bgcolor=color.new(color.blue, 30), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 6, 5, (buySignal or sellSignal) ? "✓ SIGNAL" : "○ NONE", bgcolor=(buySignal or sellSignal) ? color.new(color.green, 40) : color.new(color.gray, 40), text_color=color.white, text_size=size.small)
 
 // ============================================================================
 // FOOTER
 // ============================================================================
 int system_version = 38
-string system_status = "XAUUSD V38 - OPTIMIZED: Separated Active/Broken lines, New solid lines visible first, old dashed lines auto-cleanup after 50 bars"
+string system_status = "XAUUSD V38 - ENHANCED: standardized SL/TP, defensive guards, configurable limits"
