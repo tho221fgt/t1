@@ -158,11 +158,12 @@ if showColorGradedZones and (buySignal or sellSignal) and validSignal
         label.new(bar_index + 12, entryPrice + (sellSignal ? -0.5 : 0.5), text="📊 Win: " + str.tostring(winProbability, "#.#") + "%", color=color.new(color.white, 0), textcolor=color.black, size=size.small)
 
 // ============================================================================
-// SECTION 6: VOLUME LINES - MAXIMUM CAPACITY 70,000 LINES
+// SECTION 6: VOLUME LINES - DYNAMIC EXTEND (FIX: NOW MOVES WITH CHART)
 // ============================================================================
 var line[] volumeLines = array.new_line()
 var int[] volumeLineTouches = array.new_int()
-var bool[] volumeLineIsDashed = array.new_bool()  // FIX #1: Track which lines are already dashed
+var bool[] volumeLineIsDashed = array.new_bool()
+var int[] volumeLineBarIndex = array.new_int()  // FIX: Track original bar_index for each line
 
 // Calculate dynamic line thickness based on volume strength (2-6 pixels for better visibility)
 int currentLineThickness = int(math.max(2, math.min(int((volumeMultiplier - 1.0) * 3 + 2), 6)))
@@ -171,19 +172,24 @@ int currentLineThickness = int(math.max(2, math.min(int((volumeMultiplier - 1.0)
 if array.size(volumeLines) > 70000
     line.delete(array.shift(volumeLines))
     array.shift(volumeLineTouches)
-    array.shift(volumeLineIsDashed)  // FIX #1: Also clean up dashed state
+    array.shift(volumeLineIsDashed)
+    array.shift(volumeLineBarIndex)  // FIX: Also clean up bar_index
 
-// FIX #1 & #2: Update existing lines - convert to dashed only when price BREAKS through, not just touches
+// FIX: UPDATE ALL EXISTING LINES TO EXTEND FORWARD (makes them move with chart)
 if array.size(volumeLines) > 0
-    for i = array.size(volumeLines) - 1 to 0
+    for i = 0 to array.size(volumeLines) - 1
         line vl = array.get(volumeLines, i)
+        int originalBarIndex = array.get(volumeLineBarIndex, i)
         int touchCount = array.get(volumeLineTouches, i)
         bool isDashed = array.get(volumeLineIsDashed, i)
         float lineY = line.get_y1(vl)
         
-        // FIX #2: Only convert to dashed if price BREAKS (closes beyond) the line, not just touches it
-        // Break UP: current close > line AND previous close <= line
-        // Break DOWN: current close < line AND previous close >= line
+        // FIX: EXTEND LINE FORWARD FROM ORIGINAL BAR TO CURRENT BAR + PROJECTION
+        // This makes the lines dynamically extend as new bars are added
+        int newX2 = originalBarIndex + lineProjectionBars
+        line.set_x2(vl, newX2)
+        
+        // FIX #2: Only convert to dashed if price BREAKS (closes beyond) the line
         bool priceBreaksAbove = close > lineY and close[1] <= lineY
         bool priceBreaksBelow = close < lineY and close[1] >= lineY
         
@@ -192,44 +198,44 @@ if array.size(volumeLines) > 0
             line.set_width(vl, 1)
             line.set_color(vl, color.new(color.gray, 40))
             array.set(volumeLineTouches, i, 1)
-            array.set(volumeLineIsDashed, i, true)  // Mark as dashed to avoid re-processing
+            array.set(volumeLineIsDashed, i, true)
         
-        // Remove after 3 breaks (not just touches)
+        // Remove after 3 breaks
         if touchCount >= 3
             line.delete(vl)
             array.remove(volumeLines, i)
             array.remove(volumeLineTouches, i)
             array.remove(volumeLineIsDashed, i)
+            array.remove(volumeLineBarIndex, i)  // FIX: Also remove bar_index
 
 // ============================================================================
 // CREATE NEW VOLUME LINES - EVERY VOLUME SURGE (HIGH PRIORITY)
 // ============================================================================
-// FIXED: Now creates volume lines for EVERY volume surge, regardless of price direction
 if showVolumeLines and isVolumeSurge
     float newLineLevel = (high + low) / 2
     
     // Determine color based on close vs open PRICE DIRECTION
-    // RED = bearish (close <= open), ORANGE = bullish (close > open)
     bool isPriceUp = close > open
-    color newLineColor = isPriceUp ? color.new(#FF8C00, 2) : color.new(#FF0000, 2)  // BRIGHT ORANGE for buys, BRIGHT RED for sells
+    color newLineColor = isPriceUp ? color.new(#FF8C00, 2) : color.new(#FF0000, 2)
     
-    // EXTREME duplicate filter - only filter if lines are VERY close (less than 2 pips by default)
+    // EXTREME duplicate filter
     bool levelExists = false
-    float minDistance = syminfo.mintick * minTickMultiplier  // Default 2.0 pips
+    float minDistance = syminfo.mintick * minTickMultiplier
     
     if array.size(volumeLines) > 0
-        for i = 0 to math.min(array.size(volumeLines) - 1, 100)  // Only check last 100 lines for performance
+        for i = 0 to math.min(array.size(volumeLines) - 1, 100)
             float existingY = line.get_y1(array.get(volumeLines, i))
             if math.abs(existingY - newLineLevel) < minDistance
                 levelExists := true
                 break
     
     if not levelExists
-        // Create new volume line with MAXIMUM BRIGHTNESS and proper thickness (HIGH PRIORITY)
-        line newVolLine = line.new(x1=bar_index, y1=newLineLevel, x2=bar_index + lineProjectionBars, y2=newLineLevel, color=newLineColor, width=currentLineThickness, style=line.style_solid, extend=extend.right)
+        // FIX: Create line that extends from current bar to future projection
+        line newVolLine = line.new(x1=bar_index, y1=newLineLevel, x2=bar_index + lineProjectionBars, y2=newLineLevel, color=newLineColor, width=currentLineThickness, style=line.style_solid, extend=extend.none)
         array.push(volumeLines, newVolLine)
         array.push(volumeLineTouches, 0)
-        array.push(volumeLineIsDashed, false)  // FIX #1: Initialize dashed state as false
+        array.push(volumeLineIsDashed, false)
+        array.push(volumeLineBarIndex, bar_index)  // FIX: Store original bar_index
 
 // ============================================================================
 // SECTION 7: TACTICAL TABLE
@@ -321,4 +327,4 @@ if barstate.islast
 // FOOTER
 // ============================================================================
 int system_version = 38
-string system_status = "XAUUSD V38 - ULTIMATE: 70K lines, ORANGE buys, RED sells, BREAK-based dashing, more lines visible on lower timeframes"
+string system_status = "XAUUSD V38 - ULTIMATE: 70K lines DYNAMIC, ORANGE buys, RED sells, BREAK-based dashing, FIXED line movement"
