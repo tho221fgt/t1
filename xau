@@ -243,7 +243,7 @@ if showVolumeLines and isVolumeSurge
     // Check only recent active lines (last 100) for speed
     int checkLimit = math.min(array.size(activeLines), 100)
     if checkLimit > 0
-        for i = array.size(activeLines) - checkLimit to array.size(activeLines) - 1
+        for i = array.size(activeLines) - checkLimit to array.size(activeLines) - 1 by 1
             float existingY = line.get_y1(array.get(activeLines, i))
             if math.abs(existingY - newLineLevel) < minDistance
                 levelExists := true
