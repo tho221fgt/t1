@@ -158,12 +158,12 @@ if showColorGradedZones and (buySignal or sellSignal) and validSignal
         label.new(bar_index + 12, entryPrice + (sellSignal ? -0.5 : 0.5), text="📊 Win: " + str.tostring(winProbability, "#.#") + "%", color=color.new(color.white, 0), textcolor=color.black, size=size.small)
 
 // ============================================================================
-// SECTION 6: VOLUME LINES - DYNAMIC EXTEND (FIX: NOW MOVES WITH CHART)
+// SECTION 6: VOLUME LINES - FIXED WITH TIME-BASED POSITIONING
 // ============================================================================
 var line[] volumeLines = array.new_line()
 var int[] volumeLineTouches = array.new_int()
 var bool[] volumeLineIsDashed = array.new_bool()
-var int[] volumeLineBarIndex = array.new_int()  // FIX: Track original bar_index for each line
+var int[] volumeLineTime = array.new_int()  // FIX: Track creation time instead of bar_index
 
 // Calculate dynamic line thickness based on volume strength (2-6 pixels for better visibility)
 int currentLineThickness = int(math.max(2, math.min(int((volumeMultiplier - 1.0) * 3 + 2), 6)))
@@ -173,21 +173,16 @@ if array.size(volumeLines) > 70000
     line.delete(array.shift(volumeLines))
     array.shift(volumeLineTouches)
     array.shift(volumeLineIsDashed)
-    array.shift(volumeLineBarIndex)  // FIX: Also clean up bar_index
+    array.shift(volumeLineTime)  // FIX: Also clean up time
 
-// FIX: UPDATE ALL EXISTING LINES TO EXTEND FORWARD (makes them move with chart)
+// FIX: UPDATE ALL EXISTING LINES - USE extend=extend.right INSTEAD OF MANUAL UPDATES
+// Lines will automatically extend rightward as new bars arrive
 if array.size(volumeLines) > 0
     for i = 0 to array.size(volumeLines) - 1
         line vl = array.get(volumeLines, i)
-        int originalBarIndex = array.get(volumeLineBarIndex, i)
         int touchCount = array.get(volumeLineTouches, i)
         bool isDashed = array.get(volumeLineIsDashed, i)
         float lineY = line.get_y1(vl)
-        
-        // FIX: EXTEND LINE FORWARD FROM ORIGINAL BAR TO CURRENT BAR + PROJECTION
-        // This makes the lines dynamically extend as new bars are added
-        int newX2 = originalBarIndex + lineProjectionBars
-        line.set_x2(vl, newX2)
         
         // FIX #2: Only convert to dashed if price BREAKS (closes beyond) the line
         bool priceBreaksAbove = close > lineY and close[1] <= lineY
@@ -206,7 +201,7 @@ if array.size(volumeLines) > 0
             array.remove(volumeLines, i)
             array.remove(volumeLineTouches, i)
             array.remove(volumeLineIsDashed, i)
-            array.remove(volumeLineBarIndex, i)  // FIX: Also remove bar_index
+            array.remove(volumeLineTime, i)
 
 // ============================================================================
 // CREATE NEW VOLUME LINES - EVERY VOLUME SURGE (HIGH PRIORITY)
@@ -230,12 +225,13 @@ if showVolumeLines and isVolumeSurge
                 break
     
     if not levelExists
-        // FIX: Create line that extends from current bar to future projection
-        line newVolLine = line.new(x1=bar_index, y1=newLineLevel, x2=bar_index + lineProjectionBars, y2=newLineLevel, color=newLineColor, width=currentLineThickness, style=line.style_solid, extend=extend.none)
+        // FIX: Create line with extend=extend.right to automatically extend forward
+        // This avoids the bar_index distance error entirely
+        line newVolLine = line.new(x1=bar_index, y1=newLineLevel, x2=bar_index, y2=newLineLevel, color=newLineColor, width=currentLineThickness, style=line.style_solid, extend=extend.right)
         array.push(volumeLines, newVolLine)
         array.push(volumeLineTouches, 0)
         array.push(volumeLineIsDashed, false)
-        array.push(volumeLineBarIndex, bar_index)  // FIX: Store original bar_index
+        array.push(volumeLineTime, time)  // FIX: Store creation time
 
 // ============================================================================
 // SECTION 7: TACTICAL TABLE
@@ -327,4 +323,4 @@ if barstate.islast
 // FOOTER
 // ============================================================================
 int system_version = 38
-string system_status = "XAUUSD V38 - ULTIMATE: 70K lines DYNAMIC, ORANGE buys, RED sells, BREAK-based dashing, FIXED line movement"
+string system_status = "XAUUSD V38 - ULTIMATE: 70K lines DYNAMIC, ORANGE buys, RED sells, BREAK-based dashing, TIME-BASED extend.right (FIXED)"
