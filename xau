@@ -158,53 +158,76 @@ if showColorGradedZones and (buySignal or sellSignal) and validSignal
         label.new(bar_index + 12, entryPrice + (sellSignal ? -0.5 : 0.5), text="📊 Win: " + str.tostring(winProbability, "#.#") + "%", color=color.new(color.white, 0), textcolor=color.black, size=size.small)
 
 // ============================================================================
-// SECTION 6: VOLUME LINES - FIXED WITH TIME-BASED POSITIONING
+// SECTION 6: VOLUME LINES - OPTIMIZED WITH VISUAL PRIORITY (NEW LINES FIRST, THEN OLD)
 // ============================================================================
-var line[] volumeLines = array.new_line()
-var int[] volumeLineTouches = array.new_int()
-var bool[] volumeLineIsDashed = array.new_bool()
-var int[] volumeLineTime = array.new_int()  // FIX: Track creation time instead of bar_index
+// SEPARATE ARRAYS: Active lines (solid) and broken lines (dashed)
+var line[] activeLines = array.new_line()
+var int[] activeLineTouches = array.new_int()
+var int[] activeLineTime = array.new_int()
+
+var line[] brokenLines = array.new_line()
+var int[] brokenLineAge = array.new_int()
 
 // Calculate dynamic line thickness based on volume strength (2-6 pixels for better visibility)
 int currentLineThickness = int(math.max(2, math.min(int((volumeMultiplier - 1.0) * 3 + 2), 6)))
 
-// Cleanup old lines (keep max 70,000 for MAXIMUM price range coverage)
-if array.size(volumeLines) > 70000
-    line.delete(array.shift(volumeLines))
-    array.shift(volumeLineTouches)
-    array.shift(volumeLineIsDashed)
-    array.shift(volumeLineTime)  // FIX: Also clean up time
+// ============================================================================
+// CLEANUP: KEEP ACTIVE LINES MAX 5000, BROKEN LINES MAX 2000 FOR PERFORMANCE
+// ============================================================================
+if array.size(activeLines) > 5000
+    line.delete(array.shift(activeLines))
+    array.shift(activeLineTouches)
+    array.shift(activeLineTime)
 
-// FIX: UPDATE ALL EXISTING LINES - USE extend=extend.right INSTEAD OF MANUAL UPDATES
-// Lines will automatically extend rightward as new bars arrive
-if array.size(volumeLines) > 0
-    for i = 0 to array.size(volumeLines) - 1
-        line vl = array.get(volumeLines, i)
-        int touchCount = array.get(volumeLineTouches, i)
-        bool isDashed = array.get(volumeLineIsDashed, i)
-        float lineY = line.get_y1(vl)
+if array.size(brokenLines) > 2000
+    line.delete(array.shift(brokenLines))
+    array.shift(brokenLineAge)
+
+// ============================================================================
+// UPDATE ACTIVE LINES - CHECK FOR BREAKS
+// ============================================================================
+if array.size(activeLines) > 0
+    for i = 0 to array.size(activeLines) - 1
+        line activeLine = array.get(activeLines, i)
+        float lineY = line.get_y1(activeLine)
         
-        // FIX #2: Only convert to dashed if price BREAKS (closes beyond) the line
+        // BREAK DETECTION: Close crosses the line
         bool priceBreaksAbove = close > lineY and close[1] <= lineY
         bool priceBreaksBelow = close < lineY and close[1] >= lineY
         
-        if (priceBreaksAbove or priceBreaksBelow) and not isDashed and showDashedOldLevels
-            line.set_style(vl, line.style_dashed)
-            line.set_width(vl, 1)
-            line.set_color(vl, color.new(color.gray, 40))
-            array.set(volumeLineTouches, i, 1)
-            array.set(volumeLineIsDashed, i, true)
-        
-        // Remove after 3 breaks
-        if touchCount >= 3
-            line.delete(vl)
-            array.remove(volumeLines, i)
-            array.remove(volumeLineTouches, i)
-            array.remove(volumeLineIsDashed, i)
-            array.remove(volumeLineTime, i)
+        if (priceBreaksAbove or priceBreaksBelow) and showDashedOldLevels
+            // MOVE TO BROKEN LINES (convert to dashed, gray, thin)
+            line.set_style(activeLine, line.style_dashed)
+            line.set_width(activeLine, 1)
+            line.set_color(activeLine, color.new(color.gray, 50))
+            
+            // Remove from active array and add to broken array
+            array.push(brokenLines, activeLine)
+            array.push(brokenLineAge, 0)
+            
+            // Remove from active (reverse loop to avoid index shifting)
+            array.remove(activeLines, i)
+            array.remove(activeLineTouches, i)
+            array.remove(activeLineTime, i)
 
 // ============================================================================
-// CREATE NEW VOLUME LINES - EVERY VOLUME SURGE (HIGH PRIORITY)
+// AGE BROKEN LINES AND DELETE AFTER 50 BARS (AUTO-CLEANUP AFTER BREAKOUT)
+// ============================================================================
+if array.size(brokenLines) > 0
+    for i = array.size(brokenLines) - 1 to 0 by -1
+        int age = array.get(brokenLineAge, i)
+        int newAge = age + 1
+        
+        // Remove broken line after 50 bars of display
+        if newAge > 50
+            line.delete(array.get(brokenLines, i))
+            array.remove(brokenLines, i)
+            array.remove(brokenLineAge, i)
+        else
+            array.set(brokenLineAge, i, newAge)
+
+// ============================================================================
+// CREATE NEW VOLUME LINES - ONLY ADDED TO ACTIVE ARRAY
 // ============================================================================
 if showVolumeLines and isVolumeSurge
     float newLineLevel = (high + low) / 2
@@ -213,25 +236,25 @@ if showVolumeLines and isVolumeSurge
     bool isPriceUp = close > open
     color newLineColor = isPriceUp ? color.new(#FF8C00, 2) : color.new(#FF0000, 2)
     
-    // EXTREME duplicate filter
+    // DUPLICATE FILTER
     bool levelExists = false
     float minDistance = syminfo.mintick * minTickMultiplier
     
-    if array.size(volumeLines) > 0
-        for i = 0 to math.min(array.size(volumeLines) - 1, 100)
-            float existingY = line.get_y1(array.get(volumeLines, i))
+    // Check only recent active lines (last 100) for speed
+    int checkLimit = math.min(array.size(activeLines), 100)
+    if checkLimit > 0
+        for i = array.size(activeLines) - checkLimit to array.size(activeLines) - 1
+            float existingY = line.get_y1(array.get(activeLines, i))
             if math.abs(existingY - newLineLevel) < minDistance
                 levelExists := true
                 break
     
     if not levelExists
-        // FIX: Create line with extend=extend.right to automatically extend forward
-        // This avoids the bar_index distance error entirely
+        // Create new solid line with extend=extend.right
         line newVolLine = line.new(x1=bar_index, y1=newLineLevel, x2=bar_index, y2=newLineLevel, color=newLineColor, width=currentLineThickness, style=line.style_solid, extend=extend.right)
-        array.push(volumeLines, newVolLine)
-        array.push(volumeLineTouches, 0)
-        array.push(volumeLineIsDashed, false)
-        array.push(volumeLineTime, time)  // FIX: Store creation time
+        array.push(activeLines, newVolLine)
+        array.push(activeLineTouches, 0)
+        array.push(activeLineTime, time)
 
 // ============================================================================
 // SECTION 7: TACTICAL TABLE
@@ -308,7 +331,7 @@ if barstate.islast
     table.cell(tacticalTable, 3, 4, str.tostring(volumeMultiplier, "#.#") + "x", bgcolor=color.new(color.blue, 40), text_color=color.white, text_size=size.small)
     table.cell(tacticalTable, 4, 4, "VOL SURGE", bgcolor=isVolumeSurge ? color.new(color.green, 30) : color.new(color.gray, 30), text_color=color.white, text_size=size.small)
     table.cell(tacticalTable, 5, 4, syminfo.currency, bgcolor=color.new(color.gray, 30), text_size=size.small)
-    table.cell(tacticalTable, 6, 4, "LINES: " + str.tostring(array.size(volumeLines)), bgcolor=array.size(volumeLines) > 500 ? color.new(color.orange, 30) : color.new(color.gray, 30), text_size=size.small)
+    table.cell(tacticalTable, 6, 4, "A:" + str.tostring(array.size(activeLines)) + " B:" + str.tostring(array.size(brokenLines)), bgcolor=array.size(activeLines) > 500 ? color.new(color.orange, 30) : color.new(color.gray, 30), text_size=size.small)
     
     // ATR & PROBABILITY
     table.cell(tacticalTable, 0, 5, "ATR", bgcolor=color.gray, text_color=color.white, text_size=size.small)
@@ -323,4 +346,4 @@ if barstate.islast
 // FOOTER
 // ============================================================================
 int system_version = 38
-string system_status = "XAUUSD V38 - ULTIMATE: 70K lines DYNAMIC, ORANGE buys, RED sells, BREAK-based dashing, TIME-BASED extend.right (FIXED)"
+string system_status = "XAUUSD V38 - OPTIMIZED: Separated Active/Broken lines, New solid lines visible first, old dashed lines auto-cleanup after 50 bars"
