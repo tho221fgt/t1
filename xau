@@ -1,0 +1,324 @@
+//@version=6
+indicator("XAU Sniper [Pro Elite Institutional V38 - Complete Working Version]", overlay=true, max_lines_count=500)
+
+// ============================================================================
+// SECTION 1: INPUTS
+// ============================================================================
+float sensitivity = input.float(1.8, "Volume Sensitivity Multiplier", minval=0.5, maxval=4.0, step=0.1)
+bool useNewsFilter = input.bool(true, "Enable News Hour Filter", group="News Settings")
+int newsHour = input.int(14, "News Hour (UTC)", minval=0, maxval=23, group="News Settings")
+int newsMin = input.int(30, "News Minute (UTC)", minval=0, maxval=59, group="News Settings")
+int newsWindow = input.int(60, "News Window (minutes)", minval=15, maxval=120, group="News Settings")
+
+int lineProjectionBars = input.int(50, "Line Projection Bars", minval=20, maxval=200, group="Line Management")
+float minTickMultiplier = input.float(2.0, "Min Tick Distance (pips)", minval=0.1, maxval=20.0, group="Line Management")
+
+bool showVolumeLines = input.bool(true, "Show Volume Support/Resistance Lines", group="Volume Lines")
+bool showDashedOldLevels = input.bool(true, "Show Dashed Old Volume Levels", group="Volume Lines")
+bool showBuySellArrows = input.bool(true, "Show Buy/Sell Arrows", group="Signal Visualization")
+
+// SCALP PROFILE
+float scalpSLMult = input.float(0.6, "SCALP: SL Multiplier", minval=0.3, maxval=1.5, step=0.1, group="Scalp Profile (Quick)")
+float scalpTP1Mult = input.float(1.0, "SCALP: TP1 Multiplier", minval=0.5, maxval=2.0, step=0.1, group="Scalp Profile (Quick)")
+float scalpTP2Mult = input.float(1.5, "SCALP: TP2 Multiplier", minval=0.8, maxval=3.0, step=0.1, group="Scalp Profile (Quick)")
+float scalpTP3Mult = input.float(2.0, "SCALP: TP3 Multiplier", minval=1.0, maxval=4.0, step=0.1, group="Scalp Profile (Quick)")
+
+// SWING PROFILE
+float swingSLMult = input.float(1.2, "SWING: SL Multiplier", minval=0.5, maxval=2.5, step=0.1, group="Swing Profile (Medium)")
+float swingTP1Mult = input.float(2.0, "SWING: TP1 Multiplier", minval=1.0, maxval=3.5, step=0.1, group="Swing Profile (Medium)")
+float swingTP2Mult = input.float(3.0, "SWING: TP2 Multiplier", minval=1.5, maxval=5.0, step=0.1, group="Swing Profile (Medium)")
+float swingTP3Mult = input.float(4.5, "SWING: TP3 Multiplier", minval=2.0, maxval=7.0, step=0.1, group="Swing Profile (Medium)")
+
+// POSITION PROFILE
+float positionSLMult = input.float(2.0, "POSITION: SL Multiplier", minval=1.0, maxval=4.0, step=0.1, group="Position Profile (Long)")
+float positionTP1Mult = input.float(3.5, "POSITION: TP1 Multiplier", minval=2.0, maxval=6.0, step=0.1, group="Position Profile (Long)")
+float positionTP2Mult = input.float(5.0, "POSITION: TP2 Multiplier", minval=3.0, maxval=8.0, step=0.1, group="Position Profile (Long)")
+float positionTP3Mult = input.float(7.0, "POSITION: TP3 Multiplier", minval=4.0, maxval=10.0, step=0.1, group="Position Profile (Long)")
+
+bool showColorGradedZones = input.bool(true, "Show Color-Graded Risk/Reward Zones", group="Visualization")
+bool showWinProbability = input.bool(true, "Show Win Probability %", group="Visualization")
+float minRRFilter = input.float(1.5, "Minimum R:R Ratio Filter", minval=0.5, maxval=5.0, step=0.1, group="Visualization")
+
+// ============================================================================
+// SECTION 2: CORE CALCULATIONS
+// ============================================================================
+float avgVol = ta.sma(volume, 20)
+bool isVolumeSurge = volume > (avgVol * sensitivity)
+float volumeMultiplier = volume / avgVol
+
+bool isBullishOB = (close[1] < open[1] and close > open)
+bool isBearishOB = (close[1] > open[1] and close < open)
+
+bool buySignal = isBullishOB and isVolumeSurge
+bool sellSignal = isBearishOB and isVolumeSurge
+
+bool isNewsHour = useNewsFilter ? (hour == newsHour and minute >= newsMin and minute < (newsMin + newsWindow)) : false
+bool validSignal = not isNewsHour
+
+// ============================================================================
+// SECTION 2B: WIN PROBABILITY
+// ============================================================================
+float volumeStrength = math.min((volumeMultiplier - 1.0) * 40, 40.0)
+float obStrength = (isBearishOB or isBullishOB) ? 30.0 : 0.0
+
+float ma5 = ta.sma(close, 5)
+float trendAlignment = 0.0
+if buySignal and close > ma5
+    trendAlignment := 30.0
+else if sellSignal and close < ma5
+    trendAlignment := 30.0
+else if (buySignal or sellSignal)
+    trendAlignment := 15.0
+
+float winProbability = math.min(volumeStrength + obStrength + trendAlignment, 95.0)
+
+// ============================================================================
+// SECTION 3: ATR CALCULATIONS
+// ============================================================================
+float atrValue = ta.atr(14)
+
+float scalpSL = atrValue * scalpSLMult
+float scalpTP1 = atrValue * scalpTP1Mult
+float scalpTP2 = atrValue * scalpTP2Mult
+float scalpTP3 = atrValue * scalpTP3Mult
+
+float swingSL = atrValue * swingSLMult
+float swingTP1 = atrValue * swingTP1Mult
+float swingTP2 = atrValue * swingTP2Mult
+float swingTP3 = atrValue * swingTP3Mult
+
+float positionSL = atrValue * positionSLMult
+float positionTP1 = atrValue * positionTP1Mult
+float positionTP2 = atrValue * positionTP2Mult
+float positionTP3 = atrValue * positionTP3Mult
+
+// ============================================================================
+// SECTION 4: HEATMAP ZONES
+// ============================================================================
+if (isVolumeSurge and validSignal)
+    color boxColor = sellSignal ? color.new(color.red, 75) : color.new(color.green, 75)
+    color borderColor = sellSignal ? color.red : color.green
+    
+    box.new(left=bar_index[1], top=high[1], right=bar_index + 10, bottom=low[1], bgcolor=boxColor, border_color=borderColor, border_width=2)
+    
+    // Make label background opaque white and black text for readability
+    label.new(bar_index + 5, (high[1] + low[1]) / 2, text=str.tostring(volume / avgVol, "#.#") + "x", color=color.new(color.white, 0), textcolor=color.black, size=size.small, style=label.style_label_center)
+
+// ============================================================================
+// SECTION 5: BUY/SELL ARROWS
+// ============================================================================
+plotshape(showBuySellArrows and buySignal and validSignal, title="Institutional Buy", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.large, text="BUY")
+
+plotshape(showBuySellArrows and sellSignal and validSignal, title="Institutional Sell", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.large, text="SELL")
+
+// ============================================================================
+// SECTION 5B: RISK/REWARD ZONES - MORE VISIBLE
+// ============================================================================
+if showColorGradedZones and (buySignal or sellSignal) and validSignal
+    float entryPrice = close
+    
+    // SCALP Profile Zones
+    float scalpSLPrice = sellSignal ? (high - scalpSL) : (low - scalpSL)
+    float scalpTP2Price = sellSignal ? (close - scalpTP2) : (close + scalpTP2)
+    float scalpRiskPips = math.abs(entryPrice - scalpSLPrice)
+    float scalpRewardPips = math.abs(scalpTP2Price - entryPrice)
+    float scalpRR = scalpRiskPips > 0 ? scalpRewardPips / scalpRiskPips : 0.0
+    
+    if scalpRR >= minRRFilter
+        box.new(left=bar_index, top=sellSignal ? entryPrice : scalpSLPrice, right=bar_index + 12, bottom=sellSignal ? scalpSLPrice : entryPrice, bgcolor=color.new(color.red, 75), border_color=color.red)
+        box.new(left=bar_index, top=sellSignal ? scalpTP2Price : entryPrice, right=bar_index + 12, bottom=sellSignal ? entryPrice : scalpTP2Price, bgcolor=color.new(color.green, 75), border_color=color.green)
+    
+    // SWING Profile Zones
+    float swingSLPrice = sellSignal ? (high - swingSL) : (low - swingSL)
+    float swingTP2Price = sellSignal ? (close - swingTP2) : (close + swingTP2)
+    float swingRiskPips = math.abs(entryPrice - swingSLPrice)
+    float swingRewardPips = math.abs(swingTP2Price - entryPrice)
+    float swingRR = swingRiskPips > 0 ? swingRewardPips / swingRiskPips : 0.0
+    
+    if swingRR >= minRRFilter
+        box.new(left=bar_index, top=sellSignal ? entryPrice : swingSLPrice, right=bar_index + 18, bottom=sellSignal ? swingSLPrice : entryPrice, bgcolor=color.new(color.red, 70), border_color=color.red)
+        box.new(left=bar_index, top=sellSignal ? swingTP2Price : entryPrice, right=bar_index + 18, bottom=sellSignal ? entryPrice : swingTP2Price, bgcolor=color.new(color.green, 70), border_color=color.green)
+    
+    // POSITION Profile Zones
+    float positionSLPrice = sellSignal ? (high - positionSL) : (low - positionSL)
+    float positionTP2Price = sellSignal ? (close - positionTP2) : (close + positionTP2)
+    float positionRiskPips = math.abs(entryPrice - positionSLPrice)
+    float positionRewardPips = math.abs(positionTP2Price - entryPrice)
+    float positionRR = positionRiskPips > 0 ? positionRewardPips / positionRiskPips : 0.0
+    
+    if positionRR >= minRRFilter
+        box.new(left=bar_index, top=sellSignal ? entryPrice : positionSLPrice, right=bar_index + 25, bottom=sellSignal ? positionSLPrice : entryPrice, bgcolor=color.new(color.red, 65), border_color=color.red)
+        box.new(left=bar_index, top=sellSignal ? positionTP2Price : entryPrice, right=bar_index + 25, bottom=sellSignal ? entryPrice : positionTP2Price, bgcolor=color.new(color.green, 65), border_color=color.green)
+    
+    // Entry zone (Yellow anchor line)
+    box.new(left=bar_index - 1, top=entryPrice + 0.10, right=bar_index + 25, bottom=entryPrice - 0.10, bgcolor=color.new(color.yellow, 60), border_color=color.new(color.orange, 20), border_width=2)
+    
+    if showWinProbability
+        // Use opaque white background for win-prob label and dark text for readability
+        label.new(bar_index + 12, entryPrice + (sellSignal ? -0.5 : 0.5), text="📊 Win: " + str.tostring(winProbability, "#.#") + "%", color=color.new(color.white, 0), textcolor=color.black, size=size.small)
+
+// ============================================================================
+// SECTION 6: VOLUME LINES - MAXIMUM CAPACITY 70,000 LINES
+// ============================================================================
+var line[] volumeLines = array.new_line()
+var int[] volumeLineTouches = array.new_int()
+var bool[] volumeLineIsDashed = array.new_bool()  // FIX #1: Track which lines are already dashed
+
+// Calculate dynamic line thickness based on volume strength (2-6 pixels for better visibility)
+int currentLineThickness = int(math.max(2, math.min(int((volumeMultiplier - 1.0) * 3 + 2), 6)))
+
+// Cleanup old lines (keep max 70,000 for MAXIMUM price range coverage)
+if array.size(volumeLines) > 70000
+    line.delete(array.shift(volumeLines))
+    array.shift(volumeLineTouches)
+    array.shift(volumeLineIsDashed)  // FIX #1: Also clean up dashed state
+
+// FIX #1 & #2: Update existing lines - convert to dashed only when price BREAKS through, not just touches
+if array.size(volumeLines) > 0
+    for i = array.size(volumeLines) - 1 to 0
+        line vl = array.get(volumeLines, i)
+        int touchCount = array.get(volumeLineTouches, i)
+        bool isDashed = array.get(volumeLineIsDashed, i)
+        float lineY = line.get_y1(vl)
+        
+        // FIX #2: Only convert to dashed if price BREAKS (closes beyond) the line, not just touches it
+        // Break UP: current close > line AND previous close <= line
+        // Break DOWN: current close < line AND previous close >= line
+        bool priceBreaksAbove = close > lineY and close[1] <= lineY
+        bool priceBreaksBelow = close < lineY and close[1] >= lineY
+        
+        if (priceBreaksAbove or priceBreaksBelow) and not isDashed and showDashedOldLevels
+            line.set_style(vl, line.style_dashed)
+            line.set_width(vl, 1)
+            line.set_color(vl, color.new(color.gray, 40))
+            array.set(volumeLineTouches, i, 1)
+            array.set(volumeLineIsDashed, i, true)  // Mark as dashed to avoid re-processing
+        
+        // Remove after 3 breaks (not just touches)
+        if touchCount >= 3
+            line.delete(vl)
+            array.remove(volumeLines, i)
+            array.remove(volumeLineTouches, i)
+            array.remove(volumeLineIsDashed, i)
+
+// ============================================================================
+// CREATE NEW VOLUME LINES - EVERY VOLUME SURGE (HIGH PRIORITY)
+// ============================================================================
+// FIXED: Now creates volume lines for EVERY volume surge, regardless of price direction
+if showVolumeLines and isVolumeSurge
+    float newLineLevel = (high + low) / 2
+    
+    // Determine color based on close vs open PRICE DIRECTION
+    // RED = bearish (close <= open), ORANGE = bullish (close > open)
+    bool isPriceUp = close > open
+    color newLineColor = isPriceUp ? color.new(#FF8C00, 2) : color.new(#FF0000, 2)  // BRIGHT ORANGE for buys, BRIGHT RED for sells
+    
+    // EXTREME duplicate filter - only filter if lines are VERY close (less than 2 pips by default)
+    bool levelExists = false
+    float minDistance = syminfo.mintick * minTickMultiplier  // Default 2.0 pips
+    
+    if array.size(volumeLines) > 0
+        for i = 0 to math.min(array.size(volumeLines) - 1, 100)  // Only check last 100 lines for performance
+            float existingY = line.get_y1(array.get(volumeLines, i))
+            if math.abs(existingY - newLineLevel) < minDistance
+                levelExists := true
+                break
+    
+    if not levelExists
+        // Create new volume line with MAXIMUM BRIGHTNESS and proper thickness (HIGH PRIORITY)
+        line newVolLine = line.new(x1=bar_index, y1=newLineLevel, x2=bar_index + lineProjectionBars, y2=newLineLevel, color=newLineColor, width=currentLineThickness, style=line.style_solid, extend=extend.right)
+        array.push(volumeLines, newVolLine)
+        array.push(volumeLineTouches, 0)
+        array.push(volumeLineIsDashed, false)  // FIX #1: Initialize dashed state as false
+
+// ============================================================================
+// SECTION 7: TACTICAL TABLE
+// ============================================================================
+var table tacticalTable = table.new(position.top_right, 7, 9, border_width=2, border_color=color.new(color.gray, 50), frame_color=color.new(color.black, 100), frame_width=1)
+
+if barstate.islast
+    bool signalActive = (sellSignal or buySignal) and validSignal
+    float entryPrice = close
+    
+    table.cell(tacticalTable, 0, 0, "PROFILE", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(tacticalTable, 1, 0, "ENTRY", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(tacticalTable, 2, 0, "SL", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(tacticalTable, 3, 0, "TP1", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(tacticalTable, 4, 0, "TP2", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(tacticalTable, 5, 0, "TP3", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(tacticalTable, 6, 0, "R:R", bgcolor=color.gray, text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    
+    // SCALP ROW
+    float scalpSLPrice = signalActive ? (sellSignal ? high - scalpSL : low - scalpSL) : 0.0
+    float scalpTP1Price = signalActive ? (sellSignal ? close - scalpTP1 : close + scalpTP1) : 0.0
+    float scalpTP2Price = signalActive ? (sellSignal ? close - scalpTP2 : close + scalpTP2) : 0.0
+    float scalpTP3Price = signalActive ? (sellSignal ? close - scalpTP3 : close + scalpTP3) : 0.0
+    float scalpRiskDist = math.abs(entryPrice - scalpSLPrice)
+    float scalpRR = scalpRiskDist > 0 ? math.abs(scalpTP2Price - entryPrice) / scalpRiskDist : 0.0
+    
+    table.cell(tacticalTable, 0, 1, "🏃 SCALP", bgcolor=color.new(color.yellow, 80), text_color=color.black, text_size=size.small, text_halign=text.align_center)
+    table.cell(tacticalTable, 1, 1, str.tostring(entryPrice, "#.##"), bgcolor=color.new(color.yellow, 60), text_color=color.black, text_size=size.small)
+    table.cell(tacticalTable, 2, 1, str.tostring(scalpSLPrice, "#.##"), bgcolor=color.new(color.red, 85), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 3, 1, str.tostring(scalpTP1Price, "#.##"), bgcolor=color.new(color.green, 85), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 4, 1, str.tostring(scalpTP2Price, "#.##"), bgcolor=color.new(color.green, 85), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 5, 1, str.tostring(scalpTP3Price, "#.##"), bgcolor=color.new(color.green, 85), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 6, 1, str.tostring(scalpRR, "#.##") + ":1", bgcolor=scalpRR >= minRRFilter ? color.new(color.blue, 40) : color.new(color.orange, 40), text_color=color.white, text_size=size.small)
+    
+    // SWING ROW
+    float swingSLPrice = signalActive ? (sellSignal ? high - swingSL : low - swingSL) : 0.0
+    float swingTP1Price = signalActive ? (sellSignal ? close - swingTP1 : close + swingTP1) : 0.0
+    float swingTP2Price = signalActive ? (sellSignal ? close - swingTP2 : close + swingTP2) : 0.0
+    float swingTP3Price = signalActive ? (sellSignal ? close - swingTP3 : close + swingTP3) : 0.0
+    float swingRiskDist = math.abs(entryPrice - swingSLPrice)
+    float swingRR = swingRiskDist > 0 ? math.abs(swingTP2Price - entryPrice) / swingRiskDist : 0.0
+    
+    table.cell(tacticalTable, 0, 2, "📊 SWING", bgcolor=color.new(color.blue, 80), text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(tacticalTable, 1, 2, str.tostring(entryPrice, "#.##"), bgcolor=color.new(color.blue, 60), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 2, 2, str.tostring(swingSLPrice, "#.##"), bgcolor=color.new(color.red, 70), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 3, 2, str.tostring(swingTP1Price, "#.##"), bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 4, 2, str.tostring(swingTP2Price, "#.##"), bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 5, 2, str.tostring(swingTP3Price, "#.##"), bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 6, 2, str.tostring(swingRR, "#.##") + ":1", bgcolor=swingRR >= minRRFilter ? color.new(color.blue, 30) : color.new(color.orange, 30), text_color=color.white, text_size=size.small)
+    
+    // POSITION ROW
+    float positionSLPrice = signalActive ? (sellSignal ? high - positionSL : low - positionSL) : 0.0
+    float positionTP1Price = signalActive ? (sellSignal ? close - positionTP1 : close + positionTP1) : 0.0
+    float positionTP2Price = signalActive ? (sellSignal ? close - positionTP2 : close + positionTP2) : 0.0
+    float positionTP3Price = signalActive ? (sellSignal ? close - positionTP3 : close + positionTP3) : 0.0
+    float positionRiskDist = math.abs(entryPrice - positionSLPrice)
+    float positionRR = positionRiskDist > 0 ? math.abs(positionTP2Price - entryPrice) / positionRiskDist : 0.0
+    
+    table.cell(tacticalTable, 0, 3, "🏛️ POSITION", bgcolor=color.new(color.purple, 80), text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(tacticalTable, 1, 3, str.tostring(entryPrice, "#.##"), bgcolor=color.new(color.purple, 60), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 2, 3, str.tostring(positionSLPrice, "#.##"), bgcolor=color.new(color.red, 55), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 3, 3, str.tostring(positionTP1Price, "#.##"), bgcolor=color.new(color.green, 55), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 4, 3, str.tostring(positionTP2Price, "#.##"), bgcolor=color.new(color.green, 55), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 5, 3, str.tostring(positionTP3Price, "#.##"), bgcolor=color.new(color.green, 55), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 6, 3, str.tostring(positionRR, "#.##") + ":1", bgcolor=positionRR >= minRRFilter ? color.new(color.purple, 30) : color.new(color.orange, 30), text_color=color.white, text_size=size.small)
+    
+    // STATUS ROW
+    string signalStatus = sellSignal ? "🔴 SELL" : buySignal ? "🟢 BUY" : "⏳ WAIT"
+    color statusColor = sellSignal ? color.new(color.red, 40) : buySignal ? color.new(color.green, 40) : color.new(color.gray, 40)
+    
+    table.cell(tacticalTable, 0, 4, "STATUS", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 1, 4, signalStatus, bgcolor=statusColor, text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 2, 4, isNewsHour ? "📰 NEWS" : "✓ READY", bgcolor=isNewsHour ? color.new(color.orange, 40) : color.new(color.green, 40), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 3, 4, str.tostring(volumeMultiplier, "#.#") + "x", bgcolor=color.new(color.blue, 40), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 4, 4, "VOL SURGE", bgcolor=isVolumeSurge ? color.new(color.green, 30) : color.new(color.gray, 30), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 5, 4, syminfo.currency, bgcolor=color.new(color.gray, 30), text_size=size.small)
+    table.cell(tacticalTable, 6, 4, "LINES: " + str.tostring(array.size(volumeLines)), bgcolor=array.size(volumeLines) > 500 ? color.new(color.orange, 30) : color.new(color.gray, 30), text_size=size.small)
+    
+    // ATR & PROBABILITY
+    table.cell(tacticalTable, 0, 5, "ATR", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 1, 5, str.tostring(atrValue, "#.##"), bgcolor=color.new(color.orange, 40), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 2, 5, "WIN %", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 3, 5, str.tostring(winProbability, "#.#") + "%", bgcolor=winProbability >= 60 ? color.new(color.green, 40) : (winProbability >= 45 ? color.new(color.blue, 40) : color.new(color.orange, 40)), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 4, 5, "VOL STR", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 5, 5, str.tostring(volumeStrength, "#.#") + "%", bgcolor=color.new(color.blue, 30), text_color=color.white, text_size=size.small)
+    table.cell(tacticalTable, 6, 5, (buySignal or sellSignal) ? "✓ SIGNAL" : "○ NONE", bgcolor=(buySignal or sellSignal) ? color.new(color.green, 40) : color.new(color.gray, 40), text_color=color.white, text_size=size.small)
+
+// ============================================================================
+// FOOTER
+// ============================================================================
+int system_version = 38
+string system_status = "XAUUSD V38 - ULTIMATE: 70K lines, ORANGE buys, RED sells, BREAK-based dashing, more lines visible on lower timeframes"
