@@ -184,22 +184,29 @@ if array.size(brokenLines) > maxBrokenLines
     line.delete(array.shift(brokenLines))
     array.shift(brokenLineAge)
 
-// UPDATE ACTIVE LINES - check for price breaks (iterate reverse-safe)
+// UPDATE ACTIVE LINES - check for price breaks (iterate reverse-safe) + touch detection
 if array.size(activeLines) > 0
     int activeCount = array.size(activeLines)
     for idx = 0 to activeCount - 1
         int i = activeCount - 1 - idx
         line activeLine = array.get(activeLines, i)
-        // protect against null-like lines: try to get y1
-        float lineY = na
-        // use pcall-style guard not available; assume valid but wrap in a simple check
-        lineY := line.get_y1(activeLine)
+        float lineY = line.get_y1(activeLine)
+        int touches = array.get(activeLineTouches, i)
+        
+        // Detect break or touch
         bool priceBreaksAbove = close > lineY and close[1] <= lineY
         bool priceBreaksBelow = close < lineY and close[1] >= lineY
-        if (priceBreaksAbove or priceBreaksBelow) and showDashedOldLevels
+        bool priceTouches = (close >= lineY - syminfo.mintick and close <= lineY + syminfo.mintick) or (close[1] >= lineY - syminfo.mintick and close[1] <= lineY + syminfo.mintick)
+        
+        if priceTouches
+            touches := touches + 1
+            array.set(activeLineTouches, i, touches)
+        
+        // Convert to dashed after break OR after 3+ touches
+        if (priceBreaksAbove or priceBreaksBelow or touches >= 3) and showDashedOldLevels
             line.set_style(activeLine, line.style_dashed)
-            line.set_width(activeLine, 1)
-            line.set_color(activeLine, color.new(color.gray, 50))
+            line.set_width(activeLine, 2)
+            line.set_color(activeLine, color.new(color.gray, 60))
             array.push(brokenLines, activeLine)
             array.push(brokenLineAge, 0)
             array.remove(activeLines, i)
@@ -224,17 +231,20 @@ if array.size(brokenLines) > 0
 if showVolumeLines and isVolumeSurge
     float newLineLevel = (high + low) / 2
     bool isPriceUp = close > open
-    color newLineColor = isPriceUp ? color.new(#FF8C00, 2) : color.new(#FF0000, 2)
+    color newLineColor = isPriceUp ? color.new(#FF8C00, 30) : color.new(#FF0000, 30)
     bool levelExists = false
     float minDistance = syminfo.mintick * minTickMultiplier
-    int checkLimit = math.min(array.size(activeLines), 100)
+    
+    // Check all active lines for proximity
+    int checkLimit = math.min(array.size(activeLines), 200)
     if checkLimit > 0
-        int startIdx = array.size(activeLines) - checkLimit
+        int startIdx = math.max(0, array.size(activeLines) - checkLimit)
         for i = startIdx to array.size(activeLines) - 1
             float existingY = line.get_y1(array.get(activeLines, i))
             if math.abs(existingY - newLineLevel) < minDistance
                 levelExists := true
                 break
+    
     if not levelExists
         line newVolLine = line.new(x1=bar_index, y1=newLineLevel, x2=bar_index, y2=newLineLevel, color=newLineColor, width=currentLineThickness, style=line.style_solid, extend=extend.right)
         array.push(activeLines, newVolLine)
